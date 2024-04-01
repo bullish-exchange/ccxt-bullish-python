@@ -19,11 +19,18 @@ class bullish(Exchange, ImplicitAPI):
     public_key = None
     
     apiKey = None
-    secret: str|None = None
+    secret = None
     account_id = None
     rate_limit_token = None
     creds = None
     last_pagination_metadata = None
+
+    # Mapping of symbols from Bullish and back
+    # Presence of mapping here does not imply existance of trading market
+    symbols_bullish_to_unified = None
+    symbols_unified_to_bullish = None
+
+    cached_currencies = None
 
     environment = 'PROD' # DEV/UAT to trigger the internal DEV/UAT environment 
 
@@ -182,10 +189,46 @@ class bullish(Exchange, ImplicitAPI):
     
     ##### public APIs ######
 
+    def load_market_symbol_mappings(self): 
+        if self.symbols_bullish_to_unified is not None and self.symbols_unified_to_bullish is not None:
+            return
+        available_currencies = self.fetch_currencies()
+        available_symbols = available_currencies.keys()
+
+        self.symbols_bullish_to_unified = {}
+        self.symbols_unified_to_bullish = {}
+
+        for left in available_symbols:
+            for right in available_symbols:
+                left = left.upper()
+                right = right.upper()
+                if left != right:
+                    bullish_pair_spot = left + right
+                    unified_pair_spot = left + '/' + right
+                    bullish_pair_perp = left + "-" + right + "-PERP"
+                    unified_pair_perp = left + '/' + right + ":" + right
+
+                    self.symbols_bullish_to_unified[bullish_pair_spot] = unified_pair_spot
+                    self.symbols_unified_to_bullish[unified_pair_spot] = bullish_pair_spot
+
+                    self.symbols_bullish_to_unified[bullish_pair_perp] = unified_pair_perp
+                    self.symbols_unified_to_bullish[unified_pair_perp] = bullish_pair_perp
+
+    def to_bullish_symbol(self, unified_symbol):
+        self.load_market_symbol_mappings()
+        return self.safe_string(self.symbols_unified_to_bullish, unified_symbol, unified_symbol)
+
+    def to_unified_symbol(self, bullish_symbol):
+        self.load_market_symbol_mappings()
+        return self.safe_string(self.symbols_bullish_to_unified, bullish_symbol, bullish_symbol)
+
     def fetch_currencies(self, params={}):
+        if self.safe_bool(params, 'reload') != True and self.cached_currencies is not None:
+            return self.cached_currencies
         response = self.publicGetAssets(params)
         list_of_currencies = list(map(self.parse_currency, response))
-        return {currency['code']: currency for currency in list_of_currencies} 
+        self.cached_currencies = {currency['code']: currency for currency in list_of_currencies} 
+        return self.cached_currencies
     
     def fetch_markets(self, params={}):
         response = self.publicGetMarkets(params)
@@ -197,13 +240,13 @@ class bullish(Exchange, ImplicitAPI):
         if limit is not None:
             raise BadRequest("[fetch_trades] The `limit` parameter is not supported for this exchange")
         response = self.publicGetMarketTradesBySymbol(self.extend({
-            'symbol': symbol
+            'symbol': self.to_bullish_symbol(symbol)
         }, params))
         return list(map(self.parse_trade, response))
     
     def fetch_ticker(self, symbol: str, params={}):
         response = self.publicGetMarketTickerBySymbol(self.extend({
-            'symbol': symbol
+            'symbol': self.to_bullish_symbol(symbol)
         }, params))
         return self.parse_ticker(response, symbol)
     
@@ -218,7 +261,7 @@ class bullish(Exchange, ImplicitAPI):
         if timeframe not in self.timeframes:
             raise BadRequest("[fetch_ohlcv] timeframe '%s' is not supported" % timeframe)
         request = {
-            'symbol': symbol,
+            'symbol': self.to_bullish_symbol(symbol),
             'timeBucket': self.timeframes[timeframe],
         }
         if since is None:
@@ -238,7 +281,7 @@ class bullish(Exchange, ImplicitAPI):
         if limit is not None:
             raise NotSupported('fetch_order_book() with limit is not supported')
         request = {
-            'symbol': symbol,
+            'symbol': self.to_bullish_symbol(symbol),
             'aggregationFactor': params['aggregationFactor'] if 'aggregationFactor' in params else self.options[
                 'defaultAggregation'],
             'depth': params['depth'] if 'depth' in params else 100
@@ -246,7 +289,7 @@ class bullish(Exchange, ImplicitAPI):
         response = self.publicGetOrderBookForSymbol(self.extend(request, params))
         to_rt = self._parse_order_book(
             response,
-            symbol,
+            self.to_unified_symbol(symbol),
             timestamp=int(self.safe_value(response, 'timestamp', 0))
         )
         return to_rt
@@ -296,7 +339,7 @@ class bullish(Exchange, ImplicitAPI):
         next_nonce = self.local_nonce()
         time_in_force = params.get('timeInForce', self.options["defaultTimeInForce"])
         request = {
-            "symbol": symbol, 
+            "symbol": self.to_bullish_symbol(symbol), 
             "commandType": "V3CreateOrder",
             "side": self.options['sideMap'][side],
             "type": self.options['typeMap'][type],
@@ -310,14 +353,14 @@ class bullish(Exchange, ImplicitAPI):
         return self.privateV2PostOrder(self.extend(request, params))
     
     def fetch_my_trades(self, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
-        paginated_request = self._make_paginated_private_request(symbol, since, limit, params)
+        paginated_request = self._make_paginated_private_request(self.to_bullish_symbol(symbol), since, limit, params)
         response = self.privateGetMyTrades(self.extend(paginated_request, params))
         self.last_pagination_metadata = self._parse_pagination_metadata(self.safe_dict(response, 'links'))
         self.log("Pagination datadata updated.", self.last_pagination_metadata)
         return list(map(self.parse_trade, self.safe_list(response, 'data')))
     
     def fetch_orders(self, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
-        paginated_request = self._make_paginated_private_request(symbol, since, limit, params)
+        paginated_request = self._make_paginated_private_request(self.to_bullish_symbol(symbol), since, limit, params)
         response = self.privateGetOrders(self.extend(paginated_request, params))
         self.last_pagination_metadata = self._parse_pagination_metadata(self.safe_dict(response, 'links'))
         self.log("Pagination datadata updated.", self.last_pagination_metadata)
@@ -347,7 +390,7 @@ class bullish(Exchange, ImplicitAPI):
             "tradingAccountId": self.account_id,
         }
         if symbol is not None:
-            bullish_request['symbol'] = symbol
+            bullish_request['symbol'] = self.to_bullish_symbol(symbol)
         return self.privateGetAMMInstructions(self.extend(bullish_request, params))
 
     def fetch_amm_instruction(self, instructionId: str, symbol: Str = None, params={}):
@@ -507,7 +550,7 @@ class bullish(Exchange, ImplicitAPI):
     def fetch_position(self, symbol: str, params={}):
         self.log("Warning - only Derivative positions are available")
         response = self.privateGetDerivativesPositions(self.extend({
-            'symbol': symbol
+            'symbol': self.to_bullish_symbol(symbol)
         }, params))
         positions = self.parse_positions(response, None, params)
         position_map = {position['symbol']: position for position in positions} 
@@ -572,7 +615,7 @@ class bullish(Exchange, ImplicitAPI):
     def parse_market(self, market):
         return {
             'id': self.safe_string(market, 'marketId'),
-            'symbol': self.safe_string(market, 'symbol'),
+            'symbol': self.to_unified_symbol(self.safe_string(market, 'symbol')),
             'base': self.safe_string(market, 'baseSymbol'),
             'quote': self.safe_string(market, 'quoteSymbol'),
             'baseId': self.safe_string(market, 'baseAssetId'),
@@ -624,7 +667,7 @@ class bullish(Exchange, ImplicitAPI):
             'id': self.safe_string(trade, 'tradeId'),
             'datetime': self.safe_string(trade, 'createdAtDatetime', None),
             'timestamp': self.safe_integer(trade, 'createdAtTimestamp', None),
-            'symbol': self.safe_string(trade, 'symbol', None),
+            'symbol': self.to_unified_symbol(self.safe_string(trade, 'symbol', None)),
             'order': self.safe_string(trade, 'orderId', None),
             'side': self.parse_side(self.safe_string(trade, 'side')),
             'price': price,
@@ -666,7 +709,7 @@ class bullish(Exchange, ImplicitAPI):
             'timestamp': self.safe_integer(order, 'createdAtTimestamp'),
             'lastTradeTimestamp': None,
             'status': self.parse_order_status(self.safe_string(order, 'status')),
-            'symbol': self.safe_string(order, 'symbol'),
+            'symbol': self.to_unified_symbol(self.safe_string(order, 'symbol')),
             'type': self.parse_order_type(self.safe_string(order, 'type')),
             'timeInForce': self.safe_string(order, 'timeInForce'),
             'side': self.parse_side(self.safe_string(order, 'side')),
@@ -689,7 +732,7 @@ class bullish(Exchange, ImplicitAPI):
     
     def parse_position(self, position, market: Market = None):
         return {
-            'symbol': self.safe_string(position, 'symbol'),
+            'symbol': self.to_unified_symbol(self.safe_string(position, 'symbol')),
             'side': self.parse_position_side(self.safe_string(position, 'side')),
             'timestamp': self.safe_integer(position, 'updatedAtTimestamp', self.safe_integer(position, 'createdAtTimestamp')),
             'datetime': self.safe_string(position, 'updatedAtDatetime', self.safe_string(position, 'createdAtDatetime')),
@@ -721,8 +764,8 @@ class bullish(Exchange, ImplicitAPI):
     def parse_depositwithdrawal(self, payload):
         transaction_details = self.safe_dict(payload, 'transactionDetails')
         return {
-            'id': self.safe_symbol(payload, 'custodyTransactionId'),
-            'txid': self.safe_symbol(transaction_details, 'blockchainTxId'),
+            'id': self.safe_string(payload, 'custodyTransactionId'),
+            'txid': self.safe_string(transaction_details, 'blockchainTxId'),
             'type': self.parse_transaction_direction(self.safe_string(payload, 'direction')),
             'amount': self.safe_string(payload, 'quantity'),
             'currency': self.safe_string(payload, 'symbol'),
