@@ -57,7 +57,6 @@ At the parent folder of `tests`, trigger the tests with `pytest`
 
 ## Known gaps
 - Only supports HMAC API Keys
-- [ccxt unified symbols](https://docs.ccxt.com/#/?id=naming-consistency) is not yet implemented. Market symbols are still following Bullish's naming convention. For example, the BTC/USDC spot market have a symbol of `BTCUSDC`.
 - WebSocket support is not available
 - Only read path functionality is available - such as `fetch_markets` and `fetch_orders`. 
 - Wallet/Custody functionality is not available yet

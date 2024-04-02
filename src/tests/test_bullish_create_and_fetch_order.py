@@ -5,7 +5,7 @@ def test_can_create_and_fetch_order():
     if not exchange.check_required_credentials(error=False):
         print("WARNING. apiKey and secret needs to be set before running this test")
 
-    create_order_response = exchange.create_limit_buy_order("BTCUSDC", 0.1, 123.0)
+    create_order_response = exchange.create_limit_buy_order("BTC/USDC", 0.1, 123.0)
     assert matches_schema(create_order_response, create_order_schema)
     
     order_id = create_order_response['orderId']

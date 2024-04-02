@@ -3,7 +3,7 @@ from tests.schema_utils import matches_schema, create_order_schema, order_schema
 
 def test_can_create_perp_position():
     # Note: Trading account needs to support margin for this to work
-    create_order_response = exchange.create_market_buy_order("BTC-USDC-PERP", 0.01)
+    create_order_response = exchange.create_market_buy_order("BTC/USDC:USDC", 0.01)
     assert matches_schema(create_order_response, create_order_schema)
     
     order_id = create_order_response['orderId']
@@ -15,5 +15,5 @@ def test_can_fetch_positions():
     assert matches_schema(ret, positions_schema)
 
 def test_can_fetch_position():
-    ret = exchange.fetch_position('BTC-USDC-PERP')
+    ret = exchange.fetch_position('BTC/USDC:USDC')
     assert matches_schema(ret, position_schema)
