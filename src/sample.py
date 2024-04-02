@@ -3,4 +3,4 @@ import pprint
 
 exchange = bullish()
 markets = exchange.load_markets()
-pprint.pprint(markets['BTCUSDC'], compact=True)
+pprint.pprint(markets['BTC/USDC'], compact=True)
